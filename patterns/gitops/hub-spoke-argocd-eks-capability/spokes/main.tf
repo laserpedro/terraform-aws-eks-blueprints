@@ -51,12 +51,7 @@ locals {
   vpc_cidr = var.vpc_cidr
   azs      = slice(data.aws_availability_zones.available.names, 0, 3)
 
-  gitops_workload_org      = var.gitops_workload_org
-  gitops_workload_repo     = var.gitops_workload_repo
-  gitops_workload_basepath = var.gitops_workload_basepath
-  gitops_workload_path     = var.gitops_workload_path
-  gitops_workload_revision = var.gitops_workload_revision
-  gitops_workload_url      = "${local.gitops_workload_org}/${local.gitops_workload_repo}"
+  argocd_namespace = "argocd"
 
   tags = {
     Blueprint  = local.name
@@ -65,45 +60,38 @@ locals {
 }
 
 ################################################################################
-# GitOps Bridge: register spoke as a remote cluster in the hub's ArgoCD
+# ArgoCD Cluster Secret — registers this spoke with the hub's ArgoCD instance.
+# Created in the hub cluster's argocd namespace so ArgoCD discovers it on startup.
 ################################################################################
-module "gitops_bridge_bootstrap_hub" {
-  source = "github.com/gitops-bridge-dev/gitops-bridge-argocd-bootstrap-terraform?ref=v2.0.0"
+resource "kubernetes_secret" "argocd_cluster" {
+  provider = kubernetes.hub
 
-  # The ArgoCD cluster secret is created on the hub, not the spoke
-  providers = {
-    kubernetes = kubernetes.hub
+  metadata {
+    name      = module.eks.cluster_name
+    namespace = local.argocd_namespace
+    labels = {
+      "argocd.argoproj.io/secret-type" = "cluster"
+    }
+    annotations = {
+      "environment" = local.environment
+    }
   }
 
-  install = false # ArgoCD runs only on the hub
-  cluster = {
-    cluster_name = module.eks.cluster_name
-    environment  = local.environment
-    metadata = {
-      aws_cluster_name = module.eks.cluster_name
-      aws_region       = local.region
-      aws_account_id   = data.aws_caller_identity.current.account_id
-      aws_vpc_id       = module.vpc.vpc_id
+  type = "Opaque"
 
-      workload_repo_url      = local.gitops_workload_url
-      workload_repo_basepath = local.gitops_workload_basepath
-      workload_repo_path     = local.gitops_workload_path
-      workload_repo_revision = local.gitops_workload_revision
-    }
-    addons  = { kubernetes_version = local.cluster_version }
-    server  = module.eks.cluster_endpoint
-    config  = <<-EOT
-      {
-        "tlsClientConfig": {
-          "insecure": false,
-          "caData" : "${module.eks.cluster_certificate_authority_data}"
-        },
-        "awsAuthConfig" : {
-          "clusterName": "${module.eks.cluster_name}",
-          "roleARN": "${aws_iam_role.spoke.arn}"
-        }
+  data = {
+    name   = module.eks.cluster_name
+    server = module.eks.cluster_endpoint
+    config = jsonencode({
+      tlsClientConfig = {
+        insecure = false
+        caData   = module.eks.cluster_certificate_authority_data
       }
-    EOT
+      awsAuthConfig = {
+        clusterName = module.eks.cluster_name
+        roleARN     = aws_iam_role.spoke.arn
+      }
+    })
   }
 }
 
