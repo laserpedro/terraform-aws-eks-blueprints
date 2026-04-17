@@ -1,40 +1,16 @@
 output "configure_kubectl" {
   description = "Configure kubectl: make sure you're logged in with the correct AWS profile and run the following command to update your kubeconfig"
-  value       = <<-EOT
-    export KUBECONFIG="/tmp/hub-spoke"
-    aws eks --region ${local.region} update-kubeconfig --name ${module.eks.cluster_name} --alias hub
-  EOT
+  value       = "aws eks --region ${local.region} update-kubeconfig --name ${module.eks.cluster_name} --alias hub"
 }
 
-output "configure_argocd" {
-  description = "Terminal Setup"
-  value       = <<-EOT
-    export KUBECONFIG="/tmp/hub-spoke"
-    aws eks --region ${local.region} update-kubeconfig --name ${module.eks.cluster_name} --alias hub
-    export ARGOCD_OPTS="--port-forward --port-forward-namespace argocd --grpc-web"
-    kubectl --context hub config set-context --current --namespace argocd
-    argocd login --port-forward --username admin --password $(argocd admin initial-password | head -1)
-    echo "ArgoCD Username: admin"
-    echo "ArgoCD Password: $(kubectl get secrets argocd-initial-admin-secret -n argocd --template="{{index .data.password | base64decode}}")"
-    echo Port Forward: http://localhost:8080
-    kubectl port-forward -n argocd svc/argo-cd-argocd-server 8080:80
-    EOT
-}
-
-output "access_argocd" {
-  description = "ArgoCD Access"
-  value       = <<-EOT
-    export KUBECONFIG="/tmp/hub-spoke"
-    aws eks --region ${local.region} update-kubeconfig --name ${module.eks.cluster_name} --alias hub
-    echo "ArgoCD Username: admin"
-    echo "ArgoCD Password: $(kubectl --context hub get secrets argocd-initial-admin-secret -n argocd --template="{{index .data.password | base64decode}}")"
-    echo "ArgoCD URL: https://$(kubectl --context hub get svc -n argocd argo-cd-argocd-server -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')"
-    EOT
+output "argocd_server_url" {
+  description = "URL of the ArgoCD server deployed by the EKS capability"
+  value       = module.argocd_eks_capability.argocd_server_url
 }
 
 output "argocd_iam_role_arn" {
-  description = "IAM Role for ArgoCD on the hub cluster — used to build trust policies on spoke clusters"
-  value       = aws_iam_role.argocd.arn
+  description = "IAM Role ARN of the ArgoCD EKS capability — used in spoke cluster trust policies"
+  value       = module.argocd_eks_capability.iam_role_arn
 }
 
 output "cluster_name" {
@@ -46,7 +22,7 @@ output "cluster_endpoint" {
   value       = module.eks.cluster_endpoint
 }
 output "cluster_certificate_authority_data" {
-  description = "Hub cluster certificate_authority_data"
+  description = "Hub cluster certificate authority data"
   value       = module.eks.cluster_certificate_authority_data
 }
 output "cluster_region" {

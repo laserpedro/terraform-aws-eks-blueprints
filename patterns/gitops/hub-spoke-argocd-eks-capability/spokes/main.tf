@@ -51,11 +51,6 @@ locals {
   vpc_cidr = var.vpc_cidr
   azs      = slice(data.aws_availability_zones.available.names, 0, 3)
 
-  gitops_addons_url      = "${var.gitops_addons_org}/${var.gitops_addons_repo}"
-  gitops_addons_basepath = var.gitops_addons_basepath
-  gitops_addons_path     = var.gitops_addons_path
-  gitops_addons_revision = var.gitops_addons_revision
-
   gitops_workload_org      = var.gitops_workload_org
   gitops_workload_repo     = var.gitops_workload_repo
   gitops_workload_basepath = var.gitops_workload_basepath
@@ -63,26 +58,9 @@ locals {
   gitops_workload_revision = var.gitops_workload_revision
   gitops_workload_url      = "${local.gitops_workload_org}/${local.gitops_workload_repo}"
 
-  addons_metadata = {
-    aws_cluster_name = module.eks.cluster_name
-    aws_region       = local.region
-    aws_account_id   = data.aws_caller_identity.current.account_id
-    aws_vpc_id       = module.vpc.vpc_id
-
-    addons_repo_url      = local.gitops_addons_url
-    addons_repo_basepath = local.gitops_addons_basepath
-    addons_repo_path     = local.gitops_addons_path
-    addons_repo_revision = local.gitops_addons_revision
-
-    workload_repo_url      = local.gitops_workload_url
-    workload_repo_basepath = local.gitops_workload_basepath
-    workload_repo_path     = local.gitops_workload_path
-    workload_repo_revision = local.gitops_workload_revision
-  }
-
   tags = {
     Blueprint  = local.name
-    GithubRepo = "github.com/gitops-bridge-dev/gitops-bridge"
+    GithubRepo = "github.com/aws-ia/terraform-aws-eks-blueprints"
   }
 }
 
@@ -97,14 +75,24 @@ module "gitops_bridge_bootstrap_hub" {
     kubernetes = kubernetes.hub
   }
 
-  install = false # ArgoCD is not installed on spoke clusters
+  install = false # ArgoCD runs only on the hub
   cluster = {
     cluster_name = module.eks.cluster_name
     environment  = local.environment
-    metadata     = local.addons_metadata
-    addons       = { kubernetes_version = local.cluster_version }
-    server       = module.eks.cluster_endpoint
-    config       = <<-EOT
+    metadata = {
+      aws_cluster_name = module.eks.cluster_name
+      aws_region       = local.region
+      aws_account_id   = data.aws_caller_identity.current.account_id
+      aws_vpc_id       = module.vpc.vpc_id
+
+      workload_repo_url      = local.gitops_workload_url
+      workload_repo_basepath = local.gitops_workload_basepath
+      workload_repo_path     = local.gitops_workload_path
+      workload_repo_revision = local.gitops_workload_revision
+    }
+    addons  = { kubernetes_version = local.cluster_version }
+    server  = module.eks.cluster_endpoint
+    config  = <<-EOT
       {
         "tlsClientConfig": {
           "insecure": false,
@@ -120,7 +108,8 @@ module "gitops_bridge_bootstrap_hub" {
 }
 
 ################################################################################
-# IAM Role — assumed by ArgoCD hub Pod Identity role to access this spoke cluster
+# Spoke IAM Role
+# Assumed by the hub's ArgoCD capability IAM role to authenticate to this cluster.
 ################################################################################
 resource "aws_iam_role" "spoke" {
   name               = "${module.eks.cluster_name}-argocd-spoke"
@@ -144,20 +133,17 @@ data "aws_iam_policy_document" "assume_role_policy" {
 #tfsec:ignore:aws-eks-enable-control-plane-logging
 module "eks" {
   source  = "terraform-aws-modules/eks/aws"
-  version = "~> 20.31"
+  version = "~> 21.0"
 
-  cluster_name                   = local.name
-  cluster_version                = local.cluster_version
-  cluster_endpoint_public_access = true
-
-  vpc_id     = module.vpc.vpc_id
-  subnet_ids = module.vpc.private_subnets
+  name                   = local.name
+  kubernetes_version     = local.cluster_version
+  endpoint_public_access = true
 
   # Use EKS Access Entries API exclusively — no aws-auth ConfigMap required
   authentication_mode                      = "API"
   enable_cluster_creator_admin_permissions = true
 
-  # Grant the hub ArgoCD role cluster-admin access via EKS Access Entry.
+  # Grant the hub ArgoCD capability role cluster-admin access via EKS Access Entry.
   # This replaces the deprecated manage_aws_auth_configmap / aws_auth_roles approach.
   access_entries = {
     argocd_hub = {
@@ -172,6 +158,9 @@ module "eks" {
       }
     }
   }
+
+  vpc_id     = module.vpc.vpc_id
+  subnet_ids = module.vpc.private_subnets
 
   eks_managed_node_groups = {
     initial = {
@@ -204,7 +193,7 @@ module "eks" {
 ################################################################################
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
-  version = "~> 5.0"
+  version = "~> 6.0"
 
   name = local.name
   cidr = local.vpc_cidr

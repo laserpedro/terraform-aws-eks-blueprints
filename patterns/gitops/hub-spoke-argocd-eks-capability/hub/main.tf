@@ -4,19 +4,6 @@ provider "aws" {
 data "aws_caller_identity" "current" {}
 data "aws_availability_zones" "available" {}
 
-provider "helm" {
-  kubernetes {
-    host                   = module.eks.cluster_endpoint
-    cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
-
-    exec {
-      api_version = "client.authentication.k8s.io/v1beta1"
-      command     = "aws"
-      args = ["eks", "get-token", "--cluster-name", module.eks.cluster_name, "--region", local.region]
-    }
-  }
-}
-
 provider "kubernetes" {
   host                   = module.eks.cluster_endpoint
   cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
@@ -38,126 +25,34 @@ locals {
   vpc_cidr = var.vpc_cidr
   azs      = slice(data.aws_availability_zones.available.names, 0, 3)
 
-  gitops_addons_url      = "${var.gitops_addons_org}/${var.gitops_addons_repo}"
-  gitops_addons_basepath = var.gitops_addons_basepath
-  gitops_addons_path     = var.gitops_addons_path
-  gitops_addons_revision = var.gitops_addons_revision
-
-  argocd_namespace = "argocd"
-
-  addons_metadata = {
-    aws_cluster_name = module.eks.cluster_name
-    aws_region       = local.region
-    aws_account_id   = data.aws_caller_identity.current.account_id
-    aws_vpc_id       = module.vpc.vpc_id
-
-    argocd_iam_role_arn = aws_iam_role.argocd.arn
-    argocd_namespace    = local.argocd_namespace
-
-    addons_repo_url      = local.gitops_addons_url
-    addons_repo_basepath = local.gitops_addons_basepath
-    addons_repo_path     = local.gitops_addons_path
-    addons_repo_revision = local.gitops_addons_revision
-  }
-
-  argocd_apps = {
-    addons    = file("${path.module}/bootstrap/addons.yaml")
-    workloads = file("${path.module}/bootstrap/workloads.yaml")
-  }
-
   tags = {
     Blueprint  = local.name
-    GithubRepo = "github.com/gitops-bridge-dev/gitops-bridge"
+    GithubRepo = "github.com/aws-ia/terraform-aws-eks-blueprints"
   }
 }
 
 ################################################################################
-# GitOps Bridge: Bootstrap
-# ArgoCD is already installed via the EKS argo-cd cluster add-on, so only the
-# cluster secret and ApplicationSets need to be created here (install = false).
+# ArgoCD EKS Capability
+# Installs ArgoCD on this cluster via the native aws_eks_capability resource.
+# The IAM role created here is used by spoke clusters to build their trust policy.
 ################################################################################
-module "gitops_bridge_bootstrap" {
-  source = "github.com/gitops-bridge-dev/gitops-bridge-argocd-bootstrap-terraform?ref=v2.0.0"
+module "argocd_eks_capability" {
+  source  = "terraform-aws-modules/eks/aws//modules/capability"
+  version = "~> 21.0"
 
-  depends_on = [module.eks]
+  type         = "ARGOCD"
+  cluster_name = module.eks.cluster_name
 
-  install = false # Installed via EKS managed add-on below
-
-  cluster = {
-    cluster_name = module.eks.cluster_name
-    environment  = local.environment
-    metadata     = local.addons_metadata
-    addons       = { kubernetes_version = local.cluster_version }
-  }
-  apps = local.argocd_apps
-  argocd = {
-    namespace = local.argocd_namespace
-  }
-}
-
-################################################################################
-# ArgoCD IAM Role — Pod Identity (no OIDC circular dependency)
-# Allows ArgoCD pods to sts:AssumeRole into spoke clusters.
-################################################################################
-resource "aws_iam_role" "argocd" {
-  name               = "${local.name}-argocd"
-  assume_role_policy = data.aws_iam_policy_document.argocd_trust.json
-  tags               = local.tags
-}
-
-data "aws_iam_policy_document" "argocd_trust" {
-  statement {
-    actions = ["sts:AssumeRole", "sts:TagSession"]
-    principals {
-      type        = "Service"
-      identifiers = ["pods.eks.amazonaws.com"]
-    }
-    condition {
-      test     = "StringEquals"
-      variable = "aws:SourceAccount"
-      values   = [data.aws_caller_identity.current.account_id]
-    }
-    condition {
-      test     = "ArnLike"
-      variable = "aws:SourceArn"
-      values   = ["arn:aws:eks:${local.region}:${data.aws_caller_identity.current.account_id}:cluster/${local.name}"]
+  # Allow the ArgoCD IAM role to assume the spoke-side role on each spoke cluster
+  iam_policy_statements = {
+    AssumeSpokeClusters = {
+      effect    = "Allow"
+      actions   = ["sts:AssumeRole"]
+      resources = ["*"]
     }
   }
-}
 
-resource "aws_iam_policy" "argocd" {
-  name        = "${local.name}-argocd"
-  description = "Allows ArgoCD hub to assume roles in spoke clusters"
-  policy      = data.aws_iam_policy_document.argocd_policy.json
-  tags        = local.tags
-}
-
-data "aws_iam_policy_document" "argocd_policy" {
-  statement {
-    effect    = "Allow"
-    resources = ["*"]
-    actions   = ["sts:AssumeRole"]
-  }
-}
-
-resource "aws_iam_role_policy_attachment" "argocd" {
-  role       = aws_iam_role.argocd.name
-  policy_arn = aws_iam_policy.argocd.arn
-}
-
-# Pod Identity associations for the ArgoCD service accounts that connect to spokes
-resource "aws_eks_pod_identity_association" "argocd_server" {
-  cluster_name    = module.eks.cluster_name
-  namespace       = local.argocd_namespace
-  service_account = "argocd-server"
-  role_arn        = aws_iam_role.argocd.arn
-}
-
-resource "aws_eks_pod_identity_association" "argocd_application_controller" {
-  cluster_name    = module.eks.cluster_name
-  namespace       = local.argocd_namespace
-  service_account = "argocd-application-controller"
-  role_arn        = aws_iam_role.argocd.arn
+  tags = local.tags
 }
 
 ################################################################################
@@ -166,18 +61,18 @@ resource "aws_eks_pod_identity_association" "argocd_application_controller" {
 #tfsec:ignore:aws-eks-enable-control-plane-logging
 module "eks" {
   source  = "terraform-aws-modules/eks/aws"
-  version = "~> 20.31"
+  version = "~> 21.0"
 
-  cluster_name                   = local.name
-  cluster_version                = local.cluster_version
-  cluster_endpoint_public_access = true
-
-  vpc_id     = module.vpc.vpc_id
-  subnet_ids = module.vpc.private_subnets
+  name                   = local.name
+  kubernetes_version     = local.cluster_version
+  endpoint_public_access = true
 
   # Use EKS Access Entries API exclusively (no aws-auth ConfigMap)
   authentication_mode                      = "API"
   enable_cluster_creator_admin_permissions = true
+
+  vpc_id     = module.vpc.vpc_id
+  subnet_ids = module.vpc.private_subnets
 
   eks_managed_node_groups = {
     initial = {
@@ -190,11 +85,6 @@ module "eks" {
   }
 
   cluster_addons = {
-    # Required for EKS Pod Identity used by the argo-cd add-on
-    eks-pod-identity-agent = {
-      most_recent    = true
-      before_compute = true
-    }
     vpc-cni = {
       before_compute = true
       most_recent    = true
@@ -204,12 +94,6 @@ module "eks" {
           WARM_PREFIX_TARGET       = "1"
         }
       })
-    }
-    # ArgoCD installed as a native EKS managed add-on
-    "argo-cd" = {
-      most_recent              = true
-      resolve_conflicts_on_create = "OVERWRITE"
-      resolve_conflicts_on_update = "OVERWRITE"
     }
   }
 
@@ -221,7 +105,7 @@ module "eks" {
 ################################################################################
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
-  version = "~> 5.0"
+  version = "~> 6.0"
 
   name = local.name
   cidr = local.vpc_cidr
