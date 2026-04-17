@@ -13,18 +13,6 @@ variable "kubernetes_version" {
   type        = string
   default     = "1.31"
 }
-variable "addons" {
-  description = "Kubernetes addons"
-  type        = any
-  default = {
-    enable_aws_load_balancer_controller = true
-    enable_metrics_server               = true
-    # EKS capability for Argo CD (uses IRSA for cluster access)
-    enable_aws_argocd = true
-    # OSS Argo CD disabled — the EKS capability is the control plane
-    enable_argocd = false
-  }
-}
 # Addons Git
 variable "gitops_addons_org" {
   description = "Git repository org/user contains for addons"

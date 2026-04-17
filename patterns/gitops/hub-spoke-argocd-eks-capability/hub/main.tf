@@ -12,7 +12,6 @@ provider "helm" {
     exec {
       api_version = "client.authentication.k8s.io/v1beta1"
       command     = "aws"
-      # This requires the awscli to be installed locally where Terraform is executed
       args = ["eks", "get-token", "--cluster-name", module.eks.cluster_name, "--region", local.region]
     }
   }
@@ -25,7 +24,6 @@ provider "kubernetes" {
   exec {
     api_version = "client.authentication.k8s.io/v1beta1"
     command     = "aws"
-    # This requires the awscli to be installed locally where Terraform is executed
     args = ["eks", "get-token", "--cluster-name", module.eks.cluster_name, "--region", local.region]
   }
 }
@@ -47,76 +45,20 @@ locals {
 
   argocd_namespace = "argocd"
 
-  aws_addons = {
-    enable_cert_manager                          = try(var.addons.enable_cert_manager, false)
-    enable_aws_efs_csi_driver                    = try(var.addons.enable_aws_efs_csi_driver, false)
-    enable_aws_fsx_csi_driver                    = try(var.addons.enable_aws_fsx_csi_driver, false)
-    enable_aws_cloudwatch_metrics                = try(var.addons.enable_aws_cloudwatch_metrics, false)
-    enable_aws_privateca_issuer                  = try(var.addons.enable_aws_privateca_issuer, false)
-    enable_cluster_autoscaler                    = try(var.addons.enable_cluster_autoscaler, false)
-    enable_external_dns                          = try(var.addons.enable_external_dns, false)
-    enable_external_secrets                      = try(var.addons.enable_external_secrets, false)
-    enable_aws_load_balancer_controller          = try(var.addons.enable_aws_load_balancer_controller, false)
-    enable_fargate_fluentbit                     = try(var.addons.enable_fargate_fluentbit, false)
-    enable_aws_for_fluentbit                     = try(var.addons.enable_aws_for_fluentbit, false)
-    enable_aws_node_termination_handler          = try(var.addons.enable_aws_node_termination_handler, false)
-    enable_karpenter                             = try(var.addons.enable_karpenter, false)
-    enable_velero                                = try(var.addons.enable_velero, false)
-    enable_aws_gateway_api_controller            = try(var.addons.enable_aws_gateway_api_controller, false)
-    enable_aws_ebs_csi_resources                 = try(var.addons.enable_aws_ebs_csi_resources, false)
-    enable_aws_secrets_store_csi_driver_provider = try(var.addons.enable_aws_secrets_store_csi_driver_provider, false)
-    enable_ack_apigatewayv2                      = try(var.addons.enable_ack_apigatewayv2, false)
-    enable_ack_dynamodb                          = try(var.addons.enable_ack_dynamodb, false)
-    enable_ack_s3                                = try(var.addons.enable_ack_s3, false)
-    enable_ack_rds                               = try(var.addons.enable_ack_rds, false)
-    enable_ack_prometheusservice                 = try(var.addons.enable_ack_prometheusservice, false)
-    enable_ack_emrcontainers                     = try(var.addons.enable_ack_emrcontainers, false)
-    enable_ack_sfn                               = try(var.addons.enable_ack_sfn, false)
-    enable_ack_eventbridge                       = try(var.addons.enable_ack_eventbridge, false)
-    enable_aws_argocd                            = try(var.addons.enable_aws_argocd, true)
-  }
-  oss_addons = {
-    enable_argocd                          = try(var.addons.enable_argocd, false)
-    enable_argo_rollouts                   = try(var.addons.enable_argo_rollouts, false)
-    enable_argo_events                     = try(var.addons.enable_argo_events, false)
-    enable_argo_workflows                  = try(var.addons.enable_argo_workflows, false)
-    enable_cluster_proportional_autoscaler = try(var.addons.enable_cluster_proportional_autoscaler, false)
-    enable_gatekeeper                      = try(var.addons.enable_gatekeeper, false)
-    enable_gpu_operator                    = try(var.addons.enable_gpu_operator, false)
-    enable_ingress_nginx                   = try(var.addons.enable_ingress_nginx, false)
-    enable_kyverno                         = try(var.addons.enable_kyverno, false)
-    enable_kube_prometheus_stack           = try(var.addons.enable_kube_prometheus_stack, false)
-    enable_metrics_server                  = try(var.addons.enable_metrics_server, false)
-    enable_prometheus_adapter              = try(var.addons.enable_prometheus_adapter, false)
-    enable_secrets_store_csi_driver        = try(var.addons.enable_secrets_store_csi_driver, false)
-    enable_vpa                             = try(var.addons.enable_vpa, false)
-  }
-  addons = merge(
-    local.aws_addons,
-    local.oss_addons,
-    { kubernetes_version = local.cluster_version },
-    { aws_cluster_name = module.eks.cluster_name }
-  )
+  addons_metadata = {
+    aws_cluster_name = module.eks.cluster_name
+    aws_region       = local.region
+    aws_account_id   = data.aws_caller_identity.current.account_id
+    aws_vpc_id       = module.vpc.vpc_id
 
-  addons_metadata = merge(
-    module.eks_blueprints_addons.gitops_metadata,
-    {
-      aws_cluster_name = module.eks.cluster_name
-      aws_region       = local.region
-      aws_account_id   = data.aws_caller_identity.current.account_id
-      aws_vpc_id       = module.vpc.vpc_id
-    },
-    {
-      argocd_iam_role_arn = module.argocd_irsa.iam_role_arn
-      argocd_namespace    = local.argocd_namespace
-    },
-    {
-      addons_repo_url      = local.gitops_addons_url
-      addons_repo_basepath = local.gitops_addons_basepath
-      addons_repo_path     = local.gitops_addons_path
-      addons_repo_revision = local.gitops_addons_revision
-    }
-  )
+    argocd_iam_role_arn = aws_iam_role.argocd.arn
+    argocd_namespace    = local.argocd_namespace
+
+    addons_repo_url      = local.gitops_addons_url
+    addons_repo_basepath = local.gitops_addons_basepath
+    addons_repo_path     = local.gitops_addons_path
+    addons_repo_revision = local.gitops_addons_revision
+  }
 
   argocd_apps = {
     addons    = file("${path.module}/bootstrap/addons.yaml")
@@ -131,15 +73,21 @@ locals {
 
 ################################################################################
 # GitOps Bridge: Bootstrap
+# ArgoCD is already installed via the EKS argo-cd cluster add-on, so only the
+# cluster secret and ApplicationSets need to be created here (install = false).
 ################################################################################
 module "gitops_bridge_bootstrap" {
   source = "github.com/gitops-bridge-dev/gitops-bridge-argocd-bootstrap-terraform?ref=v2.0.0"
+
+  depends_on = [module.eks]
+
+  install = false # Installed via EKS managed add-on below
 
   cluster = {
     cluster_name = module.eks.cluster_name
     environment  = local.environment
     metadata     = local.addons_metadata
-    addons       = local.addons
+    addons       = { kubernetes_version = local.cluster_version }
   }
   apps = local.argocd_apps
   argocd = {
@@ -148,35 +96,43 @@ module "gitops_bridge_bootstrap" {
 }
 
 ################################################################################
-# ArgoCD IRSA — lets ArgoCD assume roles in spoke clusters
+# ArgoCD IAM Role — Pod Identity (no OIDC circular dependency)
+# Allows ArgoCD pods to sts:AssumeRole into spoke clusters.
 ################################################################################
-module "argocd_irsa" {
-  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
-  version = "~> 5.20"
-
-  role_name_prefix           = "argocd-hub-"
-  assume_role_condition_test = "StringLike"
-  role_policy_arns = {
-    ArgoCD_EKS_Policy = aws_iam_policy.irsa_policy.arn
-  }
-  oidc_providers = {
-    main = {
-      provider_arn               = module.eks.oidc_provider_arn
-      namespace_service_accounts = ["${local.argocd_namespace}:argocd-*"]
-    }
-  }
-
-  tags = local.tags
+resource "aws_iam_role" "argocd" {
+  name               = "${local.name}-argocd"
+  assume_role_policy = data.aws_iam_policy_document.argocd_trust.json
+  tags               = local.tags
 }
 
-resource "aws_iam_policy" "irsa_policy" {
-  name        = "${module.eks.cluster_name}-argocd-irsa"
-  description = "IAM Policy for ArgoCD Hub — allows assuming roles in spoke clusters"
-  policy      = data.aws_iam_policy_document.irsa_policy.json
+data "aws_iam_policy_document" "argocd_trust" {
+  statement {
+    actions = ["sts:AssumeRole", "sts:TagSession"]
+    principals {
+      type        = "Service"
+      identifiers = ["pods.eks.amazonaws.com"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+    condition {
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = ["arn:aws:eks:${local.region}:${data.aws_caller_identity.current.account_id}:cluster/${local.name}"]
+    }
+  }
+}
+
+resource "aws_iam_policy" "argocd" {
+  name        = "${local.name}-argocd"
+  description = "Allows ArgoCD hub to assume roles in spoke clusters"
+  policy      = data.aws_iam_policy_document.argocd_policy.json
   tags        = local.tags
 }
 
-data "aws_iam_policy_document" "irsa_policy" {
+data "aws_iam_policy_document" "argocd_policy" {
   statement {
     effect    = "Allow"
     resources = ["*"]
@@ -184,39 +140,24 @@ data "aws_iam_policy_document" "irsa_policy" {
   }
 }
 
-################################################################################
-# EKS Blueprints Addons
-################################################################################
-module "eks_blueprints_addons" {
-  source  = "aws-ia/eks-blueprints-addons/aws"
-  version = "~> 1.0"
+resource "aws_iam_role_policy_attachment" "argocd" {
+  role       = aws_iam_role.argocd.name
+  policy_arn = aws_iam_policy.argocd.arn
+}
 
-  cluster_name      = module.eks.cluster_name
-  cluster_endpoint  = module.eks.cluster_endpoint
-  cluster_version   = module.eks.cluster_version
-  oidc_provider_arn = module.eks.oidc_provider_arn
+# Pod Identity associations for the ArgoCD service accounts that connect to spokes
+resource "aws_eks_pod_identity_association" "argocd_server" {
+  cluster_name    = module.eks.cluster_name
+  namespace       = local.argocd_namespace
+  service_account = "argocd-server"
+  role_arn        = aws_iam_role.argocd.arn
+}
 
-  # Using GitOps Bridge — Helm resources are applied by ArgoCD, not Terraform
-  create_kubernetes_resources = false
-
-  # EKS Blueprints Addons
-  enable_cert_manager                 = local.aws_addons.enable_cert_manager
-  enable_aws_efs_csi_driver           = local.aws_addons.enable_aws_efs_csi_driver
-  enable_aws_fsx_csi_driver           = local.aws_addons.enable_aws_fsx_csi_driver
-  enable_aws_cloudwatch_metrics       = local.aws_addons.enable_aws_cloudwatch_metrics
-  enable_aws_privateca_issuer         = local.aws_addons.enable_aws_privateca_issuer
-  enable_cluster_autoscaler           = local.aws_addons.enable_cluster_autoscaler
-  enable_external_dns                 = local.aws_addons.enable_external_dns
-  enable_external_secrets             = local.aws_addons.enable_external_secrets
-  enable_aws_load_balancer_controller = local.aws_addons.enable_aws_load_balancer_controller
-  enable_fargate_fluentbit            = local.aws_addons.enable_fargate_fluentbit
-  enable_aws_for_fluentbit            = local.aws_addons.enable_aws_for_fluentbit
-  enable_aws_node_termination_handler = local.aws_addons.enable_aws_node_termination_handler
-  enable_karpenter                    = local.aws_addons.enable_karpenter
-  enable_velero                       = local.aws_addons.enable_velero
-  enable_aws_gateway_api_controller   = local.aws_addons.enable_aws_gateway_api_controller
-
-  tags = local.tags
+resource "aws_eks_pod_identity_association" "argocd_application_controller" {
+  cluster_name    = module.eks.cluster_name
+  namespace       = local.argocd_namespace
+  service_account = "argocd-application-controller"
+  role_arn        = aws_iam_role.argocd.arn
 }
 
 ################################################################################
@@ -249,6 +190,11 @@ module "eks" {
   }
 
   cluster_addons = {
+    # Required for EKS Pod Identity used by the argo-cd add-on
+    eks-pod-identity-agent = {
+      most_recent    = true
+      before_compute = true
+    }
     vpc-cni = {
       before_compute = true
       most_recent    = true
@@ -258,6 +204,12 @@ module "eks" {
           WARM_PREFIX_TARGET       = "1"
         }
       })
+    }
+    # ArgoCD installed as a native EKS managed add-on
+    "argo-cd" = {
+      most_recent              = true
+      resolve_conflicts_on_create = "OVERWRITE"
+      resolve_conflicts_on_update = "OVERWRITE"
     }
   }
 

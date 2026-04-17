@@ -10,10 +10,6 @@ variable "kubernetes_version" {
   description = "EKS version"
   type        = string
 }
-variable "addons" {
-  description = "Kubernetes addons"
-  type        = any
-}
 # Addons Git
 variable "gitops_addons_org" {
   description = "Git repository org/user contains for addons"

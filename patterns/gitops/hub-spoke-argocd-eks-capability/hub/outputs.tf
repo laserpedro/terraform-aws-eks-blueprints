@@ -33,8 +33,8 @@ output "access_argocd" {
 }
 
 output "argocd_iam_role_arn" {
-  description = "IAM Role for ArgoCD on hub cluster — used to build trust policies on spoke clusters"
-  value       = module.argocd_irsa.iam_role_arn
+  description = "IAM Role for ArgoCD on the hub cluster — used to build trust policies on spoke clusters"
+  value       = aws_iam_role.argocd.arn
 }
 
 output "cluster_name" {
