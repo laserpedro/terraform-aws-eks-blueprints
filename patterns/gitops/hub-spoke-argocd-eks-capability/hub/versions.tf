@@ -1,18 +1,19 @@
 terraform {
-  required_version = ">= 1.3"
+  required_version = ">= 1.5.7"
 
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = ">= 5.40.0"
-    }
-    helm = {
-      source  = "hashicorp/helm"
-      version = ">= 2.10.1"
+      version = ">= 6.28"
     }
     kubernetes = {
       source  = "hashicorp/kubernetes"
       version = ">= 2.27.0"
+    }
+    # Required internally by the capability sub-module (time_sleep resource)
+    time = {
+      source  = "hashicorp/time"
+      version = ">= 0.9"
     }
   }
 
